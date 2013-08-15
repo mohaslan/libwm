@@ -1,9 +1,6 @@
-CFLAGS += -I../src
-LIBWM = ../src
-
 all:
-	cc -c wm.c -o wm.o $(CFLAGS)
-	cc -Wl,-rpath=$(shell pwd)/$(LIBWM) -Wall -L$(LIBWM) wm.o -o wm -lX11 -lwm
+	make -C x11
+	make -C gtk
 clean:
-	rm -f *.o wm
-
+	make -C x11 clean
+	make -C gtk clean

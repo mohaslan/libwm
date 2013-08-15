@@ -36,6 +36,7 @@ void wm_new(struct wm_context *cntx, char *name) {
 	cntx->screen = 0;
 	cntx->key_press = NULL;
 	cntx->key_release = NULL;
+	cntx->draw = NULL;
 }
 
 int wm_init(struct wm_context* cntx) {
@@ -59,7 +60,7 @@ int wm_init(struct wm_context* cntx) {
 		GrabModeAsync
 	);
 
-	XSelectInput(cntx->display, cntx->root_window, KeyPressMask | KeyReleaseMask);
+	XSelectInput(cntx->display, cntx->root_window, KeyPressMask | KeyReleaseMask | SubstructureRedirectMask);
 
 	return 1;
 }
@@ -96,6 +97,8 @@ void wm_set_cursor(struct wm_context *cntx, unsigned int cursor) {
 
 void wm_event_loop(struct wm_context *cntx) {
 	XEvent event;
+	struct wm_window *win;
+	XWindowAttributes *attr;
 	for(;;) {
 		XNextEvent(cntx->display, &event);
 		if(event.type == KeyPress && cntx->key_press != NULL) {
@@ -104,10 +107,35 @@ void wm_event_loop(struct wm_context *cntx) {
 		else if(event.type == KeyRelease && cntx->key_release != NULL) {
 			(*(cntx->key_release))(XKeysymToString(XkbKeycodeToKeysym(cntx->display, event.xkey.keycode, 0, 0)));
 		}
+		else if(event.type == MappingNotify) {
+			if(event.xmapping.request == MappingKeyboard) {
+				printf("MappingEvent->MappingKeyboard\n");
+				XRefreshKeyboardMapping(&(event.xmapping));
+			}
+		}
+		else if(event.type == ConfigureRequest /*CreateNotify*/) {
+			XMoveWindow(cntx->display,
+				event.xconfigurerequest.window,
+				event.xconfigurerequest.x, 
+				event.xconfigurerequest.y
+			);
+			XResizeWindow(cntx->display,
+				event.xconfigurerequest.window,
+				event.xconfigurerequest.width,
+				event.xconfigurerequest.height
+			);
+			XSetWindowBorderWidth(cntx->display, event.xconfigurerequest.window, event.xconfigurerequest.border_width);
+		}
+		else if(event.type == MapRequest && cntx->draw != NULL){
+			win = wm_window_init(cntx, event.xmaprequest.window);
+			(*(cntx->draw))(win);
+			/*free(win);*/
+		}
+		else printf("UNKNOWN EVENT: %d\n", event.type);
 	}
 }
 
-unsigned int wm_get_windows(struct wm_context *cntx, struct wm_window **windows) {
+unsigned int wm_get_toplevel_windows(struct wm_context *cntx, struct wm_window **windows) {
 	Window root;
 	Window parent;
 	Window *children;
@@ -128,36 +156,32 @@ unsigned int wm_get_windows(struct wm_context *cntx, struct wm_window **windows)
 			continue;
 		viewable_count++;
 
-		(*windows)[i].win = children[i];
-		/*
-		XFetchName(cntx->display, children[i], &win_name);
-		(*windows)[i].title = win_name;
-		*/
-		XGetWMName(cntx->display, children[i], &prop);
-		(*windows)[i].title = prop.value;
-		/*XFree(win_name);*/
-		XGetWMIconName(cntx->display, children[i], &prop2);
-		(*windows)[i].icon = prop2.value;
+		(*windows)[i] = *(wm_window_init(cntx, children[i]));
 	}
 
 	return viewable_count;
 }
 
-void wm_move_window(struct wm_context *cntx, struct wm_window *win, unsigned int x, unsigned int y) {
+void wm_window_move(struct wm_context *cntx, struct wm_window *win, unsigned int x, unsigned int y) {
 	XMoveWindow(cntx->display, win->win, x, y);
+	XFlush(cntx->display);
 }
 
-void wm_resize_window(struct wm_context *cntx, struct wm_window *win, unsigned int w, unsigned int h) {
+void wm_window_resize(struct wm_context *cntx, struct wm_window *win, unsigned int w, unsigned int h) {
 	XResizeWindow(cntx->display, win->win, w, h);
+	XFlush(cntx->display);
 }
 
+/*
 void wm_set_border_width(struct wm_context *cntx, struct wm_window *win, unsigned int w) {
 	XSetWindowBorderWidth(cntx->display, win->win, w);
 }
+*/
 
+/*
 void wm_set_border_color(struct wm_context *cntx, struct wm_window *win, unsigned short r, unsigned short g, unsigned short b) {
 	XColor border;
-	/* X uses color scale from 0 -> 65535 */
+	// X uses color scale from 0 -> 65535
 	border.red = r * 256; 
 	border.green = g * 256;
 	border.blue = b * 256;
@@ -166,23 +190,45 @@ void wm_set_border_color(struct wm_context *cntx, struct wm_window *win, unsigne
 		clr = border.pixel;
 	XSetWindowBorder(cntx->display, win->win, clr);
 }
+*/
 
-void wm_reparent(struct wm_context *cntx, struct wm_window *win, unsigned int x, unsigned int y) {
-	GC gc;
-	XGCValues values;
-
-	//int blackColor = BlackPixel(cntx->display, DefaultScreen(cntx->display));
-	int blackColor = WhitePixel(cntx->display, DefaultScreen(cntx->display));
-	Window parent_win = XCreateSimpleWindow(cntx->display, DefaultRootWindow(cntx->display), 0, 0, 600, 600, 0, blackColor, blackColor);
-	XReparentWindow(cntx->display, win->win, parent_win, x, y);
-	XMapWindow(cntx->display, parent_win);
-
-	gc = XCreateGC(cntx->display, parent_win, None, &values);
-	XSetLineAttributes(cntx->display, gc,  2, LineSolid, CapButt, JoinRound);
-	XDrawString(cntx->display, parent_win, gc, 20, 20, "title", 5);
-
-	XMoveWindow(cntx->display, parent_win, 20, 20);
-
+void wm_reparent(struct wm_context *cntx, struct wm_window *child, struct wm_window *parent, unsigned int x, unsigned int y) {
+	XSetWindowBorderWidth(cntx->display, child->win, 0);
+	XReparentWindow(cntx->display, child->win, parent->win, x, y);
 	XFlush(cntx->display);
+}
+
+void wm_window_show(struct wm_context *cntx, struct wm_window *win) {
+	XMapWindow(cntx->display, win->win);
+	XFlush(cntx->display);
+}
+
+void wm_window_hide(struct wm_context *cntx, struct wm_window *win) {
+	XUnmapWindow(cntx->display, win->win);
+	XFlush(cntx->display);
+}
+
+struct wm_window* wm_window_init(struct wm_context* cntx, Window xid) {
+	XTextProperty title_prop, icon_prop;
+	XWindowAttributes attr;
+	struct wm_window *win = (struct wm_window *)malloc(sizeof(struct wm_window));
+	win->win = xid;
+	/*
+	XFetchName(cntx->display, xid, &win_name);
+	(*windows)[i].title = win_name;
+	//XFree(win_name);
+	*/
+	XGetWMName(cntx->display, xid, &title_prop);
+	win->title = title_prop.value;
+	XGetWMIconName(cntx->display, xid, &icon_prop);
+	win->icon = icon_prop.value;
+
+	XGetWindowAttributes(cntx->display, xid, &attr);
+	win->x = attr.x;
+	win->y = attr.y;
+	win->width = attr.width;
+	win->height = attr.height;
+
+	return win;
 }
 

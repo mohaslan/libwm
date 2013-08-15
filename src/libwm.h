@@ -32,6 +32,14 @@
 #include <X11/Xutil.h>
 //#include <X11/Xatom.h>
 
+struct wm_window{
+	Window win;
+	char *title;
+	char *icon;
+	unsigned int x, y;
+	unsigned int width, height;
+};
+
 struct wm_context{
         char *wm_name;
         Display *display;
@@ -39,12 +47,7 @@ struct wm_context{
 	int screen;
 	void (*key_press)(char *);
 	void (*key_release)(char *);
-};
-
-struct wm_window{
-	Window win;
-	char *title;
-	char *icon;
+	void (*draw)(struct wm_window *);
 };
 
 #define	CURSOR_DEFAULT	XC_X_cursor
@@ -70,12 +73,17 @@ void wm_get_screen_resolution(struct wm_context *, unsigned int *, unsigned int 
 void wm_set_background_color(struct wm_context *, unsigned short, unsigned short, unsigned short);
 void wm_set_cursor(struct wm_context *, unsigned int);
 void wm_event_loop(struct wm_context *);
-unsigned int wm_get_windows(struct wm_context *, struct wm_window **);
-void wm_move_window(struct wm_context *, struct wm_window *, unsigned int, unsigned int);
-void wm_resize_window(struct wm_context *, struct wm_window *, unsigned int, unsigned int);
+unsigned int wm_get_toplevel_windows(struct wm_context *, struct wm_window **);
+void wm_window_move(struct wm_context *, struct wm_window *, unsigned int, unsigned int);
+void wm_window_resize(struct wm_context *, struct wm_window *, unsigned int, unsigned int);
+void wm_window_show(struct wm_context *, struct wm_window *);
+void wm_window_hide(struct wm_context *, struct wm_window *);
+void wm_reparent(struct wm_context *, struct wm_window *, struct wm_window *, unsigned int, unsigned int);
+/*
 void wm_set_border_width(struct wm_context *, struct wm_window *, unsigned int);
 void wm_set_border_color(struct wm_context *, struct wm_window *, unsigned short, unsigned short, unsigned short);
-void wm_reparent(struct wm_context *, struct wm_window *, unsigned int, unsigned int);
+*/
+struct wm_window* wm_window_init(struct wm_context*, Window);
 
 #endif
 
